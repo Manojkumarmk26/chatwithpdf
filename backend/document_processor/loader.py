@@ -1,11 +1,15 @@
 import os
 import logging
+import csv
+import zipfile
+from io import StringIO
 from typing import Union, Dict, List, Optional
 from pathlib import Path
+
 import fitz  # PyMuPDF
 from PIL import Image
 import docx
-import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +22,12 @@ class DocumentLoader:
         '.pdf': 'application/pdf',
         '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         '.doc': 'application/msword',
+        '.txt': 'text/plain',
+        '.md': 'text/markdown',
+        '.csv': 'text/csv',
+        '.tsv': 'text/tab-separated-values',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
         '.png': 'image/png',
@@ -74,6 +84,14 @@ class DocumentLoader:
                 self._load_pdf(file_path)
             elif file_path.suffix.lower() in ['.docx', '.doc']:
                 self._load_docx(file_path)
+            elif file_path.suffix.lower() in ['.txt', '.md']:
+                self._load_text(file_path)
+            elif file_path.suffix.lower() in ['.csv', '.tsv']:
+                self._load_delimited(file_path)
+            elif file_path.suffix.lower() == '.xlsx':
+                self._load_excel(file_path)
+            elif file_path.suffix.lower() == '.pptx':
+                self._load_pptx(file_path)
             elif file_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.tiff', '.bmp']:
                 self._load_image(file_path)
             else:
@@ -139,6 +157,56 @@ class DocumentLoader:
             
         except Exception as e:
             raise ValueError(f"Error loading image: {str(e)}")
+
+    def _load_text(self, file_path: Path):
+        """Load plain text or markdown file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                self.text_content = f.read()
+        except Exception as e:
+            raise ValueError(f"Error loading text file: {str(e)}")
+
+    def _load_delimited(self, file_path: Path):
+        """Load CSV or TSV file and convert to structured text."""
+        delimiter = '\t' if file_path.suffix.lower() == '.tsv' else ','
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                reader = csv.reader(f, delimiter=delimiter)
+                rows = ['\t'.join(row) for row in reader]
+                self.text_content = '\n'.join(rows)
+        except Exception as e:
+            raise ValueError(f"Error loading delimited file: {str(e)}")
+
+    def _load_excel(self, file_path: Path):
+        """Load Excel file and flatten sheets into structured text."""
+        try:
+            sheets = pd.read_excel(file_path, sheet_name=None, dtype=str)
+            buffer = StringIO()
+            for sheet_name, df in sheets.items():
+                buffer.write(f"\n=== Sheet: {sheet_name} ===\n")
+                buffer.write(df.fillna('').to_csv(sep='\t', index=False))
+            self.text_content = buffer.getvalue()
+            self.metadata['sheets'] = list(sheets.keys())
+        except Exception as e:
+            raise ValueError(f"Error loading Excel file: {str(e)}")
+
+    def _load_pptx(self, file_path: Path):
+        """Load PPTX file and extract slide text."""
+        try:
+            texts: List[str] = []
+            with zipfile.ZipFile(file_path, 'r') as archive:
+                slide_files = [name for name in archive.namelist() if name.startswith('ppt/slides/slide') and name.endswith('.xml')]
+                for slide in sorted(slide_files):
+                    with archive.open(slide) as slide_data:
+                        xml_content = slide_data.read().decode('utf-8', errors='ignore')
+                        parts = [segment.split('</a:t>')[0] for segment in xml_content.split('<a:t>')[1:]]
+                        cleaned = [part.strip() for part in parts if part.strip()]
+                        if cleaned:
+                            texts.append('\n'.join(cleaned))
+            self.text_content = '\n\n'.join(texts)
+            self.metadata['slides'] = len(texts)
+        except Exception as e:
+            raise ValueError(f"Error loading PPTX file: {str(e)}")
     
     def clear(self):
         """Clear the loaded content and metadata."""

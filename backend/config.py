@@ -13,7 +13,21 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 CACHE_DIR.mkdir(exist_ok=True)
 INDEX_DIR.mkdir(exist_ok=True)
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".jpg", ".jpeg", ".png", ".bmp"}
+ALLOWED_EXTENSIONS = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".txt",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".xlsx",
+    ".pptx",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp"
+}
 MAX_FILE_SIZE = 100 * 1024 * 1024
 MAX_FILES_UPLOAD = 10
 CHUNK_SIZE = 256
@@ -35,6 +49,16 @@ OLLAMA_TIMEOUT = 300
 # FAISS Config
 SIMILARITY_THRESHOLD = 0.5
 TOP_K_RETRIEVAL = 3
+MAX_RETRIEVAL_RESULTS = 150
+
+# Query / Cache Config
+QUERY_CACHE_MAX_SIZE = int(os.getenv("QUERY_CACHE_MAX_SIZE", "100"))
+QUERY_CACHE_TTL_SECONDS = int(os.getenv("QUERY_CACHE_TTL_SECONDS", "600"))
+DEFAULT_PAGE_SIZE = int(os.getenv("DEFAULT_PAGE_SIZE", "5"))
+MAX_PAGE_SIZE = int(os.getenv("MAX_PAGE_SIZE", "25"))
+
+# Batch Processing Config
+MAX_CONCURRENT_FILE_TASKS = int(os.getenv("MAX_CONCURRENT_FILE_TASKS", "3"))
 
 # API Config
 API_TIMEOUT = 300

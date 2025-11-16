@@ -6,20 +6,37 @@ import asyncio
 import pickle
 import json
 import uuid
+import time
+import math
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Dict, List, Optional, Any
 from contextlib import asynccontextmanager
+from collections import defaultdict, OrderedDict
+
 import faiss
 import numpy as np
 import requests
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query ,Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, Field
 import PyPDF2
 from document_processor.ocr_processor import EnhancedOCRProcessor as OCRProcessor
 from document_processor.table_extractor import TableExtractor
-from collections import defaultdict
+from document_processor.loader import DocumentLoader
+
+from config import (
+    ALLOWED_EXTENSIONS as CONFIG_ALLOWED_EXTENSIONS,
+    MAX_FILE_SIZE as CONFIG_MAX_FILE_SIZE,
+    CHUNK_SIZE as CONFIG_CHUNK_SIZE,
+    CHUNK_OVERLAP as CONFIG_CHUNK_OVERLAP,
+    QUERY_CACHE_MAX_SIZE,
+    QUERY_CACHE_TTL_SECONDS,
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+    MAX_RETRIEVAL_RESULTS,
+    MAX_CONCURRENT_FILE_TASKS
+)
 # Removed summary-related imports
 # ============= LOGGING SETUP =============
 
@@ -56,10 +73,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {'.pdf'}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB (reduced)
-CHUNK_SIZE = 256  # Reduced from 512
-CHUNK_OVERLAP = 25  # Reduced from 50
+ALLOWED_EXTENSIONS = CONFIG_ALLOWED_EXTENSIONS
+MAX_FILE_SIZE = CONFIG_MAX_FILE_SIZE
+CHUNK_SIZE = CONFIG_CHUNK_SIZE
+CHUNK_OVERLAP = CONFIG_CHUNK_OVERLAP
 EMBEDDING_DIM = None
 
 logger.info("="*80)
@@ -70,6 +87,78 @@ logger.info("="*80)
 
 # ============= SHARED RESOURCES =============
 
+class QueryCache:
+    """In-memory TTL cache for frequent query responses."""
+
+    def __init__(self, max_size: int, ttl_seconds: int):
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self._cache: OrderedDict = OrderedDict()
+        self._lock = asyncio.Lock()
+
+    def _make_key(
+        self,
+        chat_id: str,
+        query: str,
+        selected_file_ids: Optional[List[str]]
+    ) -> str:
+        normalized_query = query.strip().lower()
+        files_key = tuple(sorted(selected_file_ids or []))
+        return json.dumps({
+            "chat_id": chat_id,
+            "query": normalized_query,
+            "files": files_key
+        }, sort_keys=True)
+
+    async def get(
+        self,
+        chat_id: str,
+        query: str,
+        selected_file_ids: Optional[List[str]]
+    ) -> Optional[Dict[str, Any]]:
+        key = self._make_key(chat_id, query, selected_file_ids)
+        async with self._lock:
+            cache_entry = self._cache.get(key)
+            if not cache_entry:
+                return None
+
+            timestamp, value = cache_entry
+            if time.time() - timestamp > self.ttl_seconds:
+                self._cache.pop(key, None)
+                return None
+
+            # Move to end to denote recent use
+            self._cache.move_to_end(key)
+            return value
+
+    async def set(
+        self,
+        chat_id: str,
+        query: str,
+        selected_file_ids: Optional[List[str]],
+        value: Dict[str, Any]
+    ) -> None:
+        key = self._make_key(chat_id, query, selected_file_ids)
+        async with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            self._cache[key] = (time.time(), value)
+
+            # Evict oldest entries beyond max size
+            while len(self._cache) > self.max_size:
+                self._cache.popitem(last=False)
+
+    async def clear(self) -> None:
+        async with self._lock:
+            self._cache.clear()
+
+    async def invalidate_session(self, chat_id: str) -> None:
+        async with self._lock:
+            keys_to_remove = [key for key in self._cache.keys() if json.loads(key).get("chat_id") == chat_id]
+            for key in keys_to_remove:
+                self._cache.pop(key, None)
+
+
 class SharedResources:
     """Memory-efficient resource management."""
     
@@ -79,6 +168,10 @@ class SharedResources:
         self.chat_document_mapping: Dict[str, List[str]] = {}
         self.lock = asyncio.Lock()
         self.embedder = None
+        self.query_cache = QueryCache(
+            max_size=QUERY_CACHE_MAX_SIZE,
+            ttl_seconds=QUERY_CACHE_TTL_SECONDS
+        )
         
         logger.info("✅ SharedResources initialized")
     
