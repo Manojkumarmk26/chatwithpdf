@@ -1,0 +1,97 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.python-version
+
+# Backend specific
+/backend/__pycache__/
+/backend/faiss_indices/*
+!/backend/faiss_indices/.gitkeep
+/backend/summaries/*
+!/backend/summaries/.gitkeep
+/backend/uploads/*
+!/backend/uploads/.gitkeep
+/backend/.env
+
+# Frontend
+/frontend/node_modules/
+/frontend/build/
+/frontend/.next/
+/frontend/out/
+/frontend/.cache/
+/frontend/coverage/
+/frontend/.env.local
+/frontend/.env.development.local
+/frontend/.env.test.local
+/frontend/.env.production.local
+/frontend/npm-debug.log*
+/frontend/yarn-debug.log*
+/frontend/yarn-error.log*
+
+# Project root
+.env
+.env.*
+!.env.example
+.venv
+venv/
+ENV/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+logs/
+*.log
+
+# Local development
+.local/
+.cache/
+
+# Testing
+.pytest_cache/
+.nyc_output/
+
+# Build outputs
+build/
+dist/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Documentation
+site/
+
+# Local development
+*.local
+
+# Misc
+.cache
+.vercel
+.netlify
